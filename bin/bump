@@ -1,0 +1,235 @@
+#!/bin/bash
+#***************************************************************************
+#*** bump - xcode version bump
+#***************************************************************************
+
+VERSION="0.1.0"
+
+#***** color scheme *****
+GREEN='\033[1;32m'
+RED='\033[1;31m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;36m'
+BLUE='\033[1;34m'
+DIM='\033[2m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+#***** helper functions *****
+print_header() {
+    echo -e "${CYAN}${BOLD}⚡ bump${RESET}"
+}
+
+print_success() {
+    echo -e "${GREEN}✓${RESET} $1"
+}
+
+print_error() {
+    echo -e "${RED}✗${RESET} $1"
+}
+
+print_status() {
+    echo -e "  ${GREEN}→${RESET} $1"
+}
+
+print_dim() {
+    echo -e "  ${DIM}$1${RESET}"
+}
+
+#***** show help *****
+show_help() {
+    echo
+    print_header
+    echo -e "  ${DIM}bump xcode project marketing version${RESET}"
+    echo
+    echo -e "${BLUE}USAGE${RESET}"
+    echo -e "    bump [path] [action]"
+    echo
+    echo -e "${BLUE}ACTIONS${RESET}"
+    echo -e "    patch              ${DIM}# 1.2.3 → 1.2.4${RESET}"
+    echo -e "    minor              ${DIM}# 1.2.3 → 1.3.0${RESET}"
+    echo -e "    major              ${DIM}# 1.2.3 → 2.0.0${RESET}"
+    echo -e "    1.2.3              ${DIM}# set version directly${RESET}"
+    echo -e "    ${DIM}(none)${RESET}             ${DIM}# interactive prompt${RESET}"
+    echo
+    echo -e "${BLUE}OPTIONS${RESET}"
+    echo -e "    -h, --help         Show this help"
+    echo -e "    -v, --version      Show version"
+    echo -e "    -c, --check        Show current version only"
+    echo
+    echo -e "${BLUE}EXAMPLES${RESET}"
+    echo -e "    ${DIM}bump${RESET}                ${DIM}# prompt for version${RESET}"
+    echo -e "    ${DIM}bump patch${RESET}          ${DIM}# bump patch${RESET}"
+    echo -e "    ${DIM}bump minor${RESET}          ${DIM}# bump minor${RESET}"
+    echo -e "    ${DIM}bump 2.0.0${RESET}          ${DIM}# set exactly${RESET}"
+    echo -e "    ${DIM}bump ~/MyApp patch${RESET}  ${DIM}# bump in specific dir${RESET}"
+    echo
+    exit 0
+}
+
+#***** show version *****
+show_version() {
+    echo "bump $VERSION"
+    exit 0
+}
+
+#***** find xcodeproj in a directory *****
+find_xcodeproj() {
+    local dir="$1"
+    local projects=()
+    local f
+    for f in "$dir"/*.xcodeproj; do
+        [[ -d "$f" ]] && projects+=("$f")
+    done
+
+    if [[ ${#projects[@]} -eq 0 ]]; then
+        print_error "No .xcodeproj found in $dir"
+        exit 1
+    fi
+
+    if [[ ${#projects[@]} -gt 1 ]]; then
+        print_dim "Multiple projects found, using first"
+    fi
+
+    echo "${projects[0]}"
+}
+
+#***** read current version *****
+get_version() {
+    local pbxproj="$1/project.pbxproj"
+    if [[ ! -f "$pbxproj" ]]; then
+        print_error "No project.pbxproj found"
+        exit 1
+    fi
+    grep "MARKETING_VERSION = " "$pbxproj" | sed 's/.*MARKETING_VERSION = \(.*\);/\1/' | sort -u | head -1
+}
+
+#***** bump version component *****
+bump_version() {
+    local current="$1"
+    local component="$2"
+
+    IFS='.' read -r maj min pat <<< "$current"
+    maj="${maj:-0}"; min="${min:-0}"; pat="${pat:-0}"
+
+    case "$component" in
+        major) echo "$((maj + 1)).0.0" ;;
+        minor) echo "${maj}.$((min + 1)).0" ;;
+        patch) echo "${maj}.${min}.$((pat + 1))" ;;
+    esac
+}
+
+#***** update version in pbxproj *****
+set_version() {
+    local pbxproj="$1/project.pbxproj"
+    local new_version="$2"
+    /usr/bin/sed -i '' "s/MARKETING_VERSION = .*/MARKETING_VERSION = ${new_version};/" "$pbxproj"
+}
+
+#***** parse arguments *****
+TARGET_PATH=""
+ACTION=""
+CHECK_ONLY=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            ;;
+        -v|--version)
+            show_version
+            ;;
+        -c|--check)
+            CHECK_ONLY=true
+            shift
+            ;;
+        -*)
+            print_error "Unknown option: $1"
+            echo -e "${DIM}Use 'bump --help' for usage${RESET}"
+            exit 1
+            ;;
+        major|minor|patch)
+            ACTION="$1"
+            shift
+            ;;
+        *)
+            # Version number or path?
+            if [[ "$1" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+                ACTION="$1"
+            else
+                TARGET_PATH="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+#***** main *****
+echo
+print_header
+print_dim "v${VERSION}"
+echo
+
+# Resolve project
+SEARCH_DIR="${TARGET_PATH:-.}"
+if [[ ! -d "$SEARCH_DIR" ]]; then
+    print_error "Directory not found: $SEARCH_DIR"
+    exit 1
+fi
+
+PROJECT=$(find_xcodeproj "$SEARCH_DIR")
+print_status "Project: ${BOLD}${PROJECT##*/}${RESET}"
+
+# Get current version
+CURRENT=$(get_version "$PROJECT")
+if [[ -z "$CURRENT" ]]; then
+    print_error "No MARKETING_VERSION found"
+    exit 1
+fi
+
+print_status "Current: ${BOLD}${CURRENT}${RESET}"
+
+# Check-only mode
+if [[ "$CHECK_ONLY" == true ]]; then
+    echo
+    exit 0
+fi
+
+# Determine new version
+NEW_VERSION=""
+if [[ "$ACTION" == "major" || "$ACTION" == "minor" || "$ACTION" == "patch" ]]; then
+    NEW_VERSION=$(bump_version "$CURRENT" "$ACTION")
+elif [[ -n "$ACTION" ]]; then
+    NEW_VERSION="$ACTION"
+else
+    # Interactive prompt
+    echo
+    echo -e "Enter new version (${DIM}patch/minor/major${RESET} or ${DIM}x.y.z${RESET}):"
+    echo -n "> "
+    read input
+
+    if [[ -z "$input" ]]; then
+        echo -e "${YELLOW}Cancelled.${RESET}"
+        exit 0
+    fi
+
+    case "$input" in
+        major|minor|patch)
+            NEW_VERSION=$(bump_version "$CURRENT" "$input")
+            ;;
+        *)
+            if [[ "$input" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+                NEW_VERSION="$input"
+            else
+                print_error "Invalid version: $input"
+                exit 1
+            fi
+            ;;
+    esac
+fi
+
+# Apply
+echo
+set_version "$PROJECT" "$NEW_VERSION"
+print_success "${CURRENT} → ${BOLD}${NEW_VERSION}${RESET}"
+echo
