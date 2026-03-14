@@ -1,3 +1,5 @@
+<img src="assets/icon.png" width="128" alt="bump">
+
 # bump
 
 Bump Xcode project marketing version from the command line.
