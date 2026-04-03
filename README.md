@@ -1,13 +1,25 @@
-<img src="assets/icon.png" width="128" alt="bump">
+<p align="center">
+  <img src="assets/icon.png" width="128" alt="bump">
+  <h1 align="center">bump</h1>
+  <p align="center">Bump Xcode project marketing version from the command line</p>
+</p>
 
-# bump
-
-Bump Xcode project marketing version from the command line.
+<p align="center">
+  <a href="https://github.com/Aayush9029/bump/releases/latest"><img src="https://img.shields.io/github/v/release/Aayush9029/bump" alt="Release"></a>
+  <a href="https://github.com/Aayush9029/bump/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Aayush9029/bump" alt="License"></a>
+</p>
 
 ## Install
 
 ```bash
 brew install aayush9029/tap/bump
+```
+
+Or tap first:
+
+```bash
+brew tap aayush9029/tap
+brew install bump
 ```
 
 ## Usage
@@ -22,6 +34,6 @@ bump ~/MyApp patch      # bump in specific directory
 bump --check            # show current version only
 ```
 
----
+## License
 
-*More CLI tools: [`brew tap aayush9029/tap`](https://github.com/Aayush9029/homebrew-tap)*
+MIT
