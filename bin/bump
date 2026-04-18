@@ -3,7 +3,7 @@
 #*** bump - xcode version bump
 #***************************************************************************
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 
 #***** color scheme *****
 GREEN='\033[1;32m'
@@ -57,6 +57,10 @@ show_help() {
     echo -e "    -v, --version      Show version"
     echo -e "    -c, --check        Show current version only"
     echo
+    echo -e "${BLUE}SOURCES${RESET}"
+    echo -e "    ${DIM}Prefers *.xcconfig files that define MARKETING_VERSION.${RESET}"
+    echo -e "    ${DIM}Falls back to project.pbxproj if none are found.${RESET}"
+    echo
     echo -e "${BLUE}EXAMPLES${RESET}"
     echo -e "    ${DIM}bump${RESET}                ${DIM}# prompt for version${RESET}"
     echo -e "    ${DIM}bump patch${RESET}          ${DIM}# bump patch${RESET}"
@@ -94,14 +98,44 @@ find_xcodeproj() {
     echo "${projects[0]}"
 }
 
-#***** read current version *****
-get_version() {
-    local pbxproj="$1/project.pbxproj"
-    if [[ ! -f "$pbxproj" ]]; then
-        print_error "No project.pbxproj found"
-        exit 1
+#***** find files that own MARKETING_VERSION *****
+# Prefer xcconfig files (they override pbxproj when wired as baseConfigurationReference).
+# Fall back to pbxproj if no xcconfig defines it. Writes one path per line.
+find_version_files() {
+    local project="$1"
+    local dir
+    dir="$(cd "$(dirname "$project")" && pwd)"
+
+    local found=()
+    local f
+    while IFS= read -r f; do
+        if /usr/bin/grep -qE '^[[:space:]]*MARKETING_VERSION[[:space:]]*=' "$f" 2>/dev/null; then
+            found+=("$f")
+        fi
+    done < <(/usr/bin/find "$dir" -maxdepth 4 -type f -name '*.xcconfig' 2>/dev/null)
+
+    if [[ ${#found[@]} -gt 0 ]]; then
+        printf '%s\n' "${found[@]}"
+        return 0
     fi
-    grep "MARKETING_VERSION = " "$pbxproj" | sed 's/.*MARKETING_VERSION = \(.*\);/\1/' | sort -u | head -1
+
+    local pbxproj="$project/project.pbxproj"
+    if [[ -f "$pbxproj" ]]; then
+        printf '%s\n' "$pbxproj"
+        return 0
+    fi
+
+    return 1
+}
+
+#***** read current version from a file *****
+# Matches both pbxproj ("MARKETING_VERSION = 1.2.3;") and xcconfig ("MARKETING_VERSION = 1.2.3").
+get_version_from_file() {
+    local file="$1"
+    /usr/bin/grep -E '^[[:space:]]*MARKETING_VERSION[[:space:]]*=' "$file" \
+        | /usr/bin/sed -E 's/^[[:space:]]*MARKETING_VERSION[[:space:]]*=[[:space:]]*([0-9][0-9.]*).*/\1/' \
+        | /usr/bin/sort -u \
+        | /usr/bin/head -1
 }
 
 #***** bump version component *****
@@ -119,11 +153,14 @@ bump_version() {
     esac
 }
 
-#***** update version in pbxproj *****
-set_version() {
-    local pbxproj="$1/project.pbxproj"
+#***** update MARKETING_VERSION in a file *****
+# Preserves the trailing character (semicolon in pbxproj, nothing in xcconfig).
+set_version_in_file() {
+    local file="$1"
     local new_version="$2"
-    /usr/bin/sed -i '' "s/MARKETING_VERSION = .*/MARKETING_VERSION = ${new_version};/" "$pbxproj"
+    /usr/bin/sed -i '' -E \
+        "s/^([[:space:]]*MARKETING_VERSION[[:space:]]*=[[:space:]]*)[0-9][0-9.]*([[:space:]]*;?.*)$/\1${new_version}\2/" \
+        "$file"
 }
 
 #***** parse arguments *****
@@ -180,14 +217,53 @@ fi
 PROJECT=$(find_xcodeproj "$SEARCH_DIR")
 print_status "Project: ${BOLD}${PROJECT##*/}${RESET}"
 
-# Get current version
-CURRENT=$(get_version "$PROJECT")
+# Resolve source-of-truth files.
+VERSION_FILES=()
+while IFS= read -r line; do
+    [[ -n "$line" ]] && VERSION_FILES+=("$line")
+done < <(find_version_files "$PROJECT")
+
+if [[ ${#VERSION_FILES[@]} -eq 0 ]]; then
+    print_error "No MARKETING_VERSION found"
+    print_dim "Looked in *.xcconfig and project.pbxproj"
+    exit 1
+fi
+
+# Report which file(s) will be updated.
+CWD="$(pwd)"
+if [[ ${#VERSION_FILES[@]} -eq 1 ]]; then
+    REL="${VERSION_FILES[0]#${CWD}/}"
+    print_status "Source:  ${BOLD}${REL}${RESET}"
+else
+    print_status "Sources:"
+    for f in "${VERSION_FILES[@]}"; do
+        REL="${f#${CWD}/}"
+        print_dim "  ${REL}"
+    done
+fi
+
+# Get current version (first non-empty wins; warn on drift).
+CURRENT=""
+DRIFTED=false
+for f in "${VERSION_FILES[@]}"; do
+    v=$(get_version_from_file "$f")
+    [[ -z "$v" ]] && continue
+    if [[ -z "$CURRENT" ]]; then
+        CURRENT="$v"
+    elif [[ "$v" != "$CURRENT" ]]; then
+        DRIFTED=true
+    fi
+done
+
 if [[ -z "$CURRENT" ]]; then
     print_error "No MARKETING_VERSION found"
     exit 1
 fi
 
 print_status "Current: ${BOLD}${CURRENT}${RESET}"
+if [[ "$DRIFTED" == true ]]; then
+    echo -e "  ${YELLOW}!${RESET} ${YELLOW}Versions differ across files — will normalize${RESET}"
+fi
 
 # Check-only mode
 if [[ "$CHECK_ONLY" == true ]]; then
@@ -228,8 +304,10 @@ else
     esac
 fi
 
-# Apply
+# Apply to every source file.
 echo
-set_version "$PROJECT" "$NEW_VERSION"
+for f in "${VERSION_FILES[@]}"; do
+    set_version_in_file "$f" "$NEW_VERSION"
+done
 print_success "${CURRENT} → ${BOLD}${NEW_VERSION}${RESET}"
 echo
